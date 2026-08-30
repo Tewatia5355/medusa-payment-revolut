@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Read `.claude/skills/medusa-revolut/SKILL.md` before writing or reviewing code here. It is the single source
+Read `.claude/skills/writing-provider-code/SKILL.md` before writing or reviewing code here. It is the single source
 of house style: evidence rules, Medusa conventions, comment density, ponytail, and the payment traps this repo
 has already paid for.
 

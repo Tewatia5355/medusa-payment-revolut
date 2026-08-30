@@ -1,6 +1,6 @@
 ---
-name: medusa-revolut
-description: House style for medusa-payment-revolut. Use when writing or reviewing any code in this repo — the v1.0.0 provider, tests, or plan edits. Covers evidence rules, Medusa conventions, comment density, and the payment traps already paid for.
+name: writing-provider-code
+description: House style for the medusa-payment-revolut plugin. Use when writing, reviewing, or refactoring any code in this repo — the v1.0.0 payment provider, its tests, PLAN.md edits, or a release. Covers the evidence rule (read Medusa/Revolut source, never infer from docs or memory), Medusa v2 conventions and formatting, comment density targets, ponytail simplification, the money-handling traps already paid for in production-grade defects, and how to contribute upstream.
 ---
 
 # medusa-payment-revolut house style
@@ -118,14 +118,48 @@ One test file. Cover the **security boundary** and the **money path**. Nothing e
   you already assert is noise, because a throw fails the assertion anyway.
 - Do not hardcode an assertion count in the output; it goes stale on the next edit.
 
-## 7. Distribution
+## 7. Distribution and upstream contribution
 
 Ship as a standalone npm package. **Do not open a PR against `medusajs/medusa`.**
 
 Core contains exactly one payment provider (`payment-stripe`); every community provider is a separate repo.
-`CONTRIBUTING.md`: external PRs are triaged "not at any fixed cadence" and rejected if they do not align with
-the roadmap. Issue #11609 was closed `not_planned`.
+Publishing with the `medusa-v2` and `medusa-plugin-integration` keywords puts the plugin on Medusa's
+integrations page automatically — an npm scrape, no human in the loop, no submission.
 
-The one change that legitimately belongs upstream is adding `amount` to `CapturePaymentInput`, which blocks
-partial capture. That path is: **open an issue first**, contact CODEOWNERS, then a `feat/` branch with a
-changeset and What/Why/How/Testing in the PR body.
+### If something genuinely belongs upstream
+
+**Do not open an issue for a feature.** `.github/ISSUE_TEMPLATE/config.yml` sets `blank_issues_enabled: false`
+and routes feature requests to Discussions. Issue templates exist only for bug reports and docs.
+
+| Intent | Venue |
+|---|---|
+| Feature idea | Discussions → **Feature Requests** |
+| API or type-signature change | Discussions → **RFC** |
+| Reproducible core bug | Issue (`bug_report_v2.yml`) |
+| Announce a released plugin | Discussions → **Show and tell** |
+| Question | Discord |
+
+Then, per `CONTRIBUTING.md`:
+
+1. Discussion first. *"Reach out to CODEOWNERS instead of directly submitting a PR with all the changes…
+   the PR is not accepted, which will be the case if it does not align with our roadmap."*
+2. `CODEOWNERS` maps `/packages/` → **@medusajs/os**, `/www/` → @medusajs/docs, everything else →
+   @medusajs/core.
+3. Only then: fork, branch from `develop` with a `feat/` or `fix/` prefix, add a changeset
+   (`yarn changeset`; patch for non-breaking), write unit **and** integration tests, and fill the PR template's
+   **What / Why / How / Testing** plus an `// Example usage` snippet. PRs are squash-merged.
+
+### Realistic expectations
+
+`CONTRIBUTING.md` states external PRs are triaged *"not at any fixed cadence"*. Sampling the five Feature
+Requests opened between 2026-08-20 and 2026-08-29: 1-2 upvotes each, 0-1 comments, none answered by a
+maintainer. Issue #11609 was closed `not_planned`.
+
+**Post if useful, but never block a release on a reply.**
+
+### The one open upstream item
+
+`CapturePaymentInput` is an empty interface, so the capture amount never reaches the provider, which makes
+partial capture impossible to implement correctly (see §5). That is an RFC for @medusajs/os — and only worth
+raising once a shipped plugin and a real user back it. A speculative type change from a stranger is the
+category `CONTRIBUTING.md` says gets declined.
