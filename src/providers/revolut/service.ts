@@ -36,6 +36,8 @@ export type RevolutOptions = {
   webhookSecret: string
   redirectUrl: string
   sandbox?: boolean
+  /** Overrides the Revolut host. Only for integration tests against a stub. */
+  baseUrl?: string
 }
 
 type OrderState =
@@ -128,6 +130,7 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
   }
 
   private get baseUrl(): string {
+    if (this.config.baseUrl) return this.config.baseUrl
     return this.config.sandbox
       ? "https://sandbox-merchant.revolut.com"
       : "https://merchant.revolut.com"

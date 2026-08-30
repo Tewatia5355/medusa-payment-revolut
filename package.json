@@ -29,7 +29,8 @@
     "test": "jest --passWithNoTests src",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"spike/*.mjs\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"spike/*.mjs\""
+    "format:check": "prettier --check \"src/**/*.ts\" \"spike/*.mjs\"",
+    "test:e2e": "node test/e2e/run.mjs"
   },
   "devDependencies": {
     "@medusajs/framework": "2.19.0",
