@@ -26,6 +26,9 @@ Requires Medusa `2.19.0` and Node 20+.
 ```ts
 // medusa-config.ts
 module.exports = defineConfig({
+  // Required. Medusa registers plugin API routes only from this list, and the webhook
+  // endpoint lives there. Configuring the provider alone leaves /hooks/revolut unrouted.
+  plugins: ["medusa-payment-revolut"],
   modules: [
     {
       resolve: "@medusajs/medusa/payment",
@@ -65,8 +68,14 @@ final failed attempt. Processing `ORDER_COMPLETED` requires a second call to Rev
 there would lose a captured payment permanently — Revolut has the money, the Medusa order stays awaiting
 payment, and Revolut never retries because it already received a 200.
 
-`/hooks/revolut` does the same work synchronously and answers with a status Revolut can act on: `401` for an
-invalid signature (permanent, stop), `503` for a transient failure (retry), `200` once the payment is recorded.
+`/hooks/revolut` does the same work synchronously and answers with a status Revolut can act on. Revolut retries
+any error response three more times at ten-minute intervals and accepts anything in `200-399`, so:
+
+| Status | When | Effect |
+|---|---|---|
+| `204` | invalid signature | logged and acknowledged; retrying can never make it valid |
+| `503` | transient failure retrieving or processing the order | Revolut retries |
+| `200` | payment recorded, or event not actionable | done |
 
 ## How the flow works
 

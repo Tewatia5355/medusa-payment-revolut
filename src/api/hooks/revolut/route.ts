@@ -1,6 +1,11 @@
 import { processPaymentWorkflow } from "@medusajs/core-flows"
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import { MedusaError, Modules, PaymentActions } from "@medusajs/framework/utils"
+import {
+  ContainerRegistrationKeys,
+  MedusaError,
+  Modules,
+  PaymentActions,
+} from "@medusajs/framework/utils"
 
 // Provider id without the `pp_` prefix, which the Payment Module prepends.
 const PROVIDER = "revolut_revolut"
@@ -28,11 +33,20 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
       },
     })
   } catch (err) {
-    // A bad signature is permanent, so tell Revolut to stop. Anything else — a 5xx or timeout
-    // while retrieving the order — is transient and must be retried.
+    // Revolut retries any error response three more times at ten-minute intervals and accepts
+    // anything in 200-399. A bad signature will never become valid, so retrying it is pointless
+    // noise: log it and acknowledge. Everything else — a 5xx or timeout retrieving the order —
+    // is transient and must be retried.
     const unauthorized =
       err instanceof MedusaError && err.type === MedusaError.Types.UNAUTHORIZED
-    res.status(unauthorized ? 401 : 503).send((err as Error).message)
+    if (unauthorized) {
+      req.scope
+        .resolve(ContainerRegistrationKeys.LOGGER)
+        .warn(`Rejected Revolut webhook: ${(err as Error).message}`)
+      res.sendStatus(204)
+      return
+    }
+    res.status(503).send((err as Error).message)
     return
   }
 
