@@ -14,7 +14,7 @@ const WEBHOOK_SECRET = process.env.MOCK_WEBHOOK_SECRET ?? "wsk_mocksecret"
 
 const orders = new Map()
 const calls = []
-let failNext = { times: 0, status: 503 }
+let failNext = { times: 0, status: 503, orderId: null }
 
 const json = (res, status, body) => {
   res.writeHead(status, { "Content-Type": "application/json" })
@@ -80,13 +80,18 @@ const server = http.createServer((req, res) => {
       return json(res, 200, o)
     }
     if (path === "/_test/fail") {
-      failNext = { times: body.times ?? 1, status: body.status ?? 503 }
+      // Scoping to one order stops unrelated in-flight reads from consuming the budget.
+      failNext = {
+        times: body.times ?? 1,
+        status: body.status ?? 503,
+        orderId: body.orderId ?? null,
+      }
       return json(res, 200, failNext)
     }
     if (path === "/_test/reset") {
       orders.clear()
       calls.length = 0
-      failNext = { times: 0, status: 503 }
+      failNext = { times: 0, status: 503, orderId: null }
       return json(res, 200, { ok: true })
     }
 
@@ -107,7 +112,11 @@ const server = http.createServer((req, res) => {
         return json(res, 404, { code: 1000, message: "Order not found" })
 
       // Simulate a transient outage on reads, which is the failure the custom route exists for.
-      if (req.method === "GET" && failNext.times > 0) {
+      if (
+        req.method === "GET" &&
+        failNext.times > 0 &&
+        (!failNext.orderId || failNext.orderId === id)
+      ) {
         failNext.times -= 1
         return json(res, failNext.status, {
           code: 9999,

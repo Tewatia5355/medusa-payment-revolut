@@ -128,22 +128,16 @@ async function happyPath() {
   const { status, session } = await initSession(collectionId)
 
   check("payment session created", status === 200, `HTTP ${status}`)
+  // No Revolut order yet: a payable checkout_url must not exist before an order does.
   check(
-    "session status is pending_authorization",
-    session?.status === "pending_authorization",
-    `got ${session?.status}`
-  )
-  check(
-    "checkout_url returned to the storefront",
-    typeof session?.data?.checkout_url === "string",
-    session?.data?.checkout_url
+    "no checkout_url before the cart is completed",
+    !session?.data?.checkout_url,
+    `got ${session?.data?.checkout_url ?? "none"}`
   )
   check(
     "no PII persisted in session data",
     !JSON.stringify(session?.data ?? {}).match(/cardholder|payer|card_bin/i)
   )
-
-  const revolutOrderId = session.data.id
 
   // The order must exist before the customer is redirected.
   const { status: cs, body: cb } = await store(
@@ -157,6 +151,20 @@ async function happyPath() {
   )
   const orderId = cb.order?.id
   check("order created awaiting payment", !!orderId, orderId)
+
+  // Only now does a payable URL exist.
+  const live = await sessionRow(session.id)
+  check(
+    "checkout_url appears only after the order exists",
+    typeof live?.data?.checkout_url === "string",
+    live?.data?.checkout_url
+  )
+  check(
+    "session is pending_authorization",
+    live?.status === "pending_authorization",
+    `got ${live?.status}`
+  )
+  const revolutOrderId = live.data.id
 
   // Customer pays on Revolut.
   await mock(`/_test/state/${revolutOrderId}`, { state: "completed" })
@@ -217,17 +225,20 @@ async function transientFailure() {
   const { cartId, collectionId } = await buildCart()
   const { session } = await initSession(collectionId)
   await store(`/store/carts/${cartId}/complete`, { method: "POST" })
-  await mock(`/_test/state/${session.data.id}`, { state: "completed" })
+  const { data } = await sessionRow(session.id)
 
-  await mock("/_test/fail", { times: 1, status: 503 })
-  const failed = await webhook("ORDER_COMPLETED", session.data.id, session.id)
+  await mock(`/_test/state/${data.id}`, { state: "completed" })
+  // Scoped to this order so unrelated in-flight reads cannot consume the budget.
+  await mock("/_test/fail", { times: 1, status: 503, orderId: data.id })
+
+  const failed = await webhook("ORDER_COMPLETED", data.id, session.id)
   check(
     "503 while Revolut is down",
     failed.status === 503,
     `HTTP ${failed.status}`
   )
 
-  const retried = await webhook("ORDER_COMPLETED", session.data.id, session.id)
+  const retried = await webhook("ORDER_COMPLETED", data.id, session.id)
   check(
     "retry succeeds once Revolut recovers",
     retried.status === 200,
@@ -240,23 +251,84 @@ async function outOfOrder() {
   const { cartId, collectionId } = await buildCart()
   const { session } = await initSession(collectionId)
   await store(`/store/carts/${cartId}/complete`, { method: "POST" })
+  const { data } = await sessionRow(session.id)
 
   // Order still processing at Revolut.
-  await mock(`/_test/state/${session.data.id}`, { state: "processing" })
-  const early = await webhook("ORDER_COMPLETED", session.data.id, session.id)
+  await mock(`/_test/state/${data.id}`, { state: "processing" })
+  const early = await webhook("ORDER_COMPLETED", data.id, session.id)
   check(
     "early event acknowledged, not actioned",
     early.status === 200,
     `HTTP ${early.status}`
   )
 
-  await mock(`/_test/state/${session.data.id}`, { state: "completed" })
-  const later = await webhook("ORDER_COMPLETED", session.data.id, session.id)
+  await mock(`/_test/state/${data.id}`, { state: "completed" })
+  const later = await webhook("ORDER_COMPLETED", data.id, session.id)
   check(
     "later delivery captures it",
     later.status === 200,
     `HTTP ${later.status}`
   )
+}
+
+// A cart that cannot be completed must never yield a captured payment.
+async function uncompletableCart() {
+  console.log(
+    "\n6. Cart that cannot complete must not produce a captured payment"
+  )
+  const { body: p } = await store("/store/products?limit=1&fields=*variants")
+  const { body: c } = await store("/store/carts", {
+    method: "POST",
+    body: { region_id: REGION, email: "e2e@test.local" },
+  })
+  const cartId = c.cart.id
+  await store(`/store/carts/${cartId}/line-items`, {
+    method: "POST",
+    body: { variant_id: p.products[0].variants[0].id, quantity: 1 },
+  })
+  // No shipping address and no shipping method, so completion fails.
+  const { body: pcol } = await store("/store/payment-collections", {
+    method: "POST",
+    body: { cart_id: cartId },
+  })
+  const collectionId = pcol.payment_collection.id
+  const { session } = await initSession(collectionId)
+
+  const { status: cs } = await store(`/store/carts/${cartId}/complete`, {
+    method: "POST",
+  })
+  check("cart completion fails as expected", cs !== 200, `HTTP ${cs}`)
+  check(
+    "no Revolut order was created for an uncompletable cart",
+    !session?.data?.id,
+    `order ${session?.data?.id ?? "none"}`
+  )
+
+  const captured = await collectionCaptured(collectionId)
+  check("nothing captured", !captured, `captured ${captured}`)
+}
+
+// The Store order response does not nest payment sessions, so read them directly.
+async function sessionRow(sessionId) {
+  const { execSync } = await import("node:child_process")
+  const out = execSync(
+    `docker exec medusa-pg psql -U medusa -d medusa -tAc "select status || '|' || data::text from payment_session where id='${sessionId}'"`
+  )
+    .toString()
+    .trim()
+  const [status, ...rest] = out.split("|")
+  return { status, data: JSON.parse(rest.join("|")) }
+}
+
+// Read straight from the DB: there is no public Store route for a bare collection.
+async function collectionCaptured(collectionId) {
+  const { execSync } = await import("node:child_process")
+  const out = execSync(
+    `docker exec medusa-pg psql -U medusa -d medusa -tAc "select coalesce(captured_amount,0) from payment_collection where id='${collectionId}'"`
+  )
+    .toString()
+    .trim()
+  return Number(out)
 }
 
 async function capturedTotal(orderId) {
@@ -271,6 +343,7 @@ async function main() {
   await badSignature(ctx)
   await transientFailure()
   await outOfOrder()
+  await uncompletableCart()
 
   console.log(`\n${pass} passed, ${fail} failed`)
   process.exit(fail ? 1 : 0)

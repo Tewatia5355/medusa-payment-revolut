@@ -156,7 +156,10 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
     const text = await res.text()
     if (!res.ok) {
       throw new MedusaError(
-        MedusaError.Types.UNEXPECTED_STATE,
+        // 404 is terminal: retrying will never find the order.
+        res.status === 404
+          ? MedusaError.Types.NOT_FOUND
+          : MedusaError.Types.UNEXPECTED_STATE,
         `Revolut ${init.method ?? "GET"} ${path} failed with ${res.status}: ${text}`
       )
     }
@@ -178,49 +181,106 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
     return this.request<RevolutOrder>(`/api/orders/${id}`)
   }
 
+  // Deliberately does NOT create the Revolut order. Medusa exposes session data to the
+  // storefront immediately, so creating it here would publish a payable checkout_url before
+  // an order exists — and core captures even when cart completion permanently fails
+  // (process-payment: continueOnPermanentFailure). The order is created in authorizePayment,
+  // which runs inside cart completion.
   async initiatePayment({
     amount,
     currency_code,
     data,
   }: InitiatePaymentInput): Promise<InitiatePaymentOutput> {
     const sessionId = data?.session_id as string | undefined
-
-    const order = await this.request<RevolutOrder>("/api/orders", {
-      method: "POST",
-      body: {
-        amount: toMinor(amount, currency_code),
-        currency: currency_code.toUpperCase(),
-        capture_mode: "automatic",
-        // Carried back on webhooks as merchant_order_ext_ref, and filterable via
-        // ?merchant_order_data_reference= — the only link back to the Medusa session.
-        merchant_order_data: { reference: sessionId },
-        redirect_url: this.config.redirectUrl,
-        // Rollback calls deletePayment with the original input.data, which has neither the
-        // order id nor the session id, so an orphan can only be cleaned up by expiry.
-        expire_pending_after: "PT30M",
-      },
-    })
+    if (!sessionId) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        "Medusa did not supply a payment session id"
+      )
+    }
 
     return {
-      id: order.id,
-      data: project(order),
-      status: STATUS[order.state],
+      id: sessionId,
+      status: PaymentSessionStatus.PENDING,
+      data: {
+        session_id: sessionId,
+        amount: toMinor(amount, currency_code),
+        currency: currency_code.toUpperCase(),
+      },
     }
   }
 
-  // Returns pending_authorization until Revolut reports `completed`, so the cart completes and
-  // an awaiting-payment order exists before the customer is redirected. Completing afterwards
-  // would risk a captured payment with no order.
+  // Creates the Revolut order on first call, which happens during cart completion, then keeps
+  // returning pending_authorization until Revolut reports `completed`. The order therefore
+  // exists in Medusa before the customer can reach a payable checkout_url.
   async authorizePayment({
     data,
   }: AuthorizePaymentInput): Promise<AuthorizePaymentOutput> {
-    const order = await this.retrieveOrder(this.orderId(data))
+    const order = data?.id
+      ? await this.retrieveOrder(this.orderId(data))
+      : await this.createOrder(data)
+
+    this.assertMatches(order, data)
     return { data: project(order), status: STATUS[order.state] }
+  }
+
+  private async createOrder(
+    data: Record<string, unknown> | undefined
+  ): Promise<RevolutOrder> {
+    const amount = data?.amount
+    const currency = data?.currency
+    if (typeof amount !== "number" || typeof currency !== "string") {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        "Payment session data is missing the amount or currency recorded at initiation"
+      )
+    }
+
+    return this.request<RevolutOrder>("/api/orders", {
+      method: "POST",
+      body: {
+        amount,
+        currency,
+        capture_mode: "automatic",
+        // Carried back on webhooks as merchant_order_ext_ref, and filterable via
+        // ?merchant_order_data_reference= — the only link back to the Medusa session.
+        merchant_order_data: { reference: data?.session_id },
+        redirect_url: this.config.redirectUrl,
+        expire_pending_after: "PT30M",
+      },
+      idempotencyKey: data?.session_id as string | undefined,
+    })
+  }
+
+  // Medusa records session.amount and session.currency_code, never the values Revolut reports
+  // (payment-module: createPaymentFromSession). If the remote order has drifted, marking the
+  // collection paid would silently misstate the ledger, so refuse instead.
+  private assertMatches(
+    order: RevolutOrder,
+    data: Record<string, unknown> | undefined
+  ): void {
+    const amount = data?.amount
+    const currency = data?.currency
+    if (typeof amount === "number" && order.amount !== amount) {
+      throw new MedusaError(
+        MedusaError.Types.CONFLICT,
+        `Revolut order ${order.id} is ${order.amount} but the session expects ${amount}`
+      )
+    }
+    if (typeof currency === "string" && order.currency !== currency) {
+      throw new MedusaError(
+        MedusaError.Types.CONFLICT,
+        `Revolut order ${order.id} is ${order.currency} but the session expects ${currency}`
+      )
+    }
   }
 
   async getPaymentStatus({
     data,
   }: GetPaymentStatusInput): Promise<GetPaymentStatusOutput> {
+    // No order until authorizePayment runs during cart completion.
+    if (!data?.id) return { data, status: PaymentSessionStatus.PENDING }
+
     const order = await this.retrieveOrder(this.orderId(data))
     return { data: project(order), status: STATUS[order.state] }
   }
@@ -228,6 +288,8 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
   async retrievePayment({
     data,
   }: RetrievePaymentInput): Promise<RetrievePaymentOutput> {
+    if (!data?.id) return { data }
+
     const order = await this.retrieveOrder(this.orderId(data))
     return { data: project(order) }
   }
@@ -329,14 +391,30 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
       )
     }
 
-    const event = payload.data as { event?: string; order_id?: string }
-    if (event?.event !== "ORDER_COMPLETED" || !event.order_id) {
+    const event = payload.data as { event?: unknown; order_id?: unknown }
+    if (
+      event?.event !== "ORDER_COMPLETED" ||
+      typeof event.order_id !== "string" ||
+      !event.order_id
+    ) {
       return { action: PaymentActions.NOT_SUPPORTED }
     }
 
     // Webhooks carry no amount and merchant_order_ext_ref is optional, but WebhookActionData
     // requires both session_id and amount, so the order is always retrieved.
-    const order = await this.retrieveOrder(event.order_id)
+    let order: RevolutOrder
+    try {
+      order = await this.retrieveOrder(event.order_id)
+    } catch (err) {
+      // An unknown order will never resolve, so acknowledge instead of asking for retries.
+      if (
+        err instanceof MedusaError &&
+        err.type === MedusaError.Types.NOT_FOUND
+      ) {
+        return { action: PaymentActions.NOT_SUPPORTED }
+      }
+      throw err
+    }
     const sessionId = order.merchant_order_data?.reference
     if (order.type !== "payment" || !sessionId || order.state !== "completed") {
       return { action: PaymentActions.NOT_SUPPORTED }
