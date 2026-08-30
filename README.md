@@ -80,26 +80,39 @@ any error response three more times at ten-minute intervals and accepts anything
 ## How the flow works
 
 ```
-initiatePayment   POST /api/orders            -> { id, token, checkout_url }
-authorizePayment  returns pending_authorization           (no Payment yet)
-cart.complete     order created, payment status "awaiting"
-storefront        redirect to checkout_url
+initiatePayment   no Revolut call — records session id, amount, currency
+cart.complete     ├─ authorizePayment -> POST /api/orders  { id, token, checkout_url }
+                  ├─ returns pending_authorization         (no Payment yet)
+                  └─ order created, payment status "awaiting"
+storefront        read checkout_url from the session, then redirect
 customer pays on Revolut
 webhook           POST /hooks/revolut -> verify HMAC -> retrieve order
 Medusa            Payment created and captured on the existing order
 ```
 
-**The order is created before the customer pays.** This is deliberate. Redirecting first and completing the
-cart afterwards hits `continueOnPermanentFailure: true` in Medusa's `process-payment` workflow, which keeps
-the captured payment even when order creation fails — and a `completed` Revolut order cannot be cancelled.
+**The Revolut order is created during cart completion, not at session initiation.** This is deliberate and is
+the single most important property of the integration.
+
+Medusa exposes payment-session data to the storefront as soon as a session is initiated. If the Revolut order
+were created there, a payable `checkout_url` would exist *before* any Medusa order did — and a customer who
+paid against a cart that then failed to complete would be charged with no order to show for it. Medusa's
+`process-payment` workflow captures and then explicitly ignores permanent cart-completion failure
+(`continueOnPermanentFailure: true`), and a `completed` Revolut order cannot be cancelled, so nothing
+downstream can undo it.
+
+Creating the order inside `authorizePayment` — which runs as part of cart completion — means a payable URL
+cannot exist until an order does. It also means that when concurrent requests race and produce several payment
+sessions, only the one that survives to completion ever becomes chargeable.
 
 ## Storefront
 
 The default `nextjs-starter-medusa` has no provider UI registry, so it needs three changes:
 
 1. Add a `paymentInfoMap` entry for `pp_revolut_revolut`.
-2. Call `cart.complete` **before** redirecting to `checkout_url`.
+2. Call `cart.complete` **first**, then read `checkout_url` from the payment session and redirect. The URL does
+   not exist before completion — see above. This is the opposite order to Stripe, so it is easy to get wrong.
 3. Handle sessions with status `pending_authorization`; the starter only looks for `pending`.
+4. On return, re-read order state rather than trusting the redirect. The webhook is what confirms payment.
 
 ## Limitations
 
