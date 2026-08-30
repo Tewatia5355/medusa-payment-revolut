@@ -106,13 +106,22 @@ sessions, only the one that survives to completion ever becomes chargeable.
 
 ## Storefront
 
-The default `nextjs-starter-medusa` has no provider UI registry, so it needs three changes:
+The default `nextjs-starter-medusa` has no provider UI registry, so it needs three small changes. A verified,
+copy-pasteable integration is in [`examples/nextjs-starter/`](./examples/nextjs-starter) — it was applied to a
+real checkout against a live backend and adds no type errors to the starter.
 
-1. Add a `paymentInfoMap` entry for `pp_revolut_revolut`.
-2. Call `cart.complete` **first**, then read `checkout_url` from the payment session and redirect. The URL does
-   not exist before completion — see above. This is the opposite order to Stripe, so it is easy to get wrong.
-3. Handle sessions with status `pending_authorization`; the starter only looks for `pending`.
-4. On return, re-read order state rather than trusting the redirect. The webhook is what confirms payment.
+The one thing that matters: **complete the cart first, then read `checkout_url` and redirect.** The URL does
+not exist before completion, which is the opposite order to Stripe. Reversing it reintroduces the exact bug
+this design prevents.
+
+Two non-obvious details the example handles:
+
+- `cart.complete` returns `payment_collections` but not `payment_sessions`; the order must be refetched.
+- That refetch needs `fields: "*payment_collections.payment_sessions"`. Asking only for `.data` omits
+  `provider_id`, leaving no way to identify the Revolut session.
+
+No change is needed to the payment step itself — `initiatePayment` returns status `pending`, which is what the
+stock starter already filters for.
 
 ## Limitations
 

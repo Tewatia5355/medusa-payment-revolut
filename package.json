@@ -31,7 +31,8 @@
     "format": "prettier --write \"src/**/*.ts\" \"spike/*.mjs\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"spike/*.mjs\"",
     "test:e2e": "node test/e2e/run.mjs",
-    "test:e2e:adversarial": "node test/e2e/adversarial.mjs"
+    "test:e2e:adversarial": "node test/e2e/adversarial.mjs",
+    "test:e2e:storefront": "node test/e2e/storefront.mjs"
   },
   "devDependencies": {
     "@medusajs/framework": "2.19.0",
