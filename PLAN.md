@@ -98,11 +98,13 @@ exactly one match (so §5.3 orphan recovery works); `capture_mode: "automatic"` 
 
 **Six things Sandbox revealed that the OpenAPI spec did not:**
 
-1. **Webhook delivery is at-least-once.** `ORDER_AUTHORISED` and `ORDER_COMPLETED` each arrived **twice** for a
-   single payment, byte-identical, despite the listener returning HTTP 200 promptly. The mechanism is not
-   documented; treat delivery as duplicable. Medusa is protected — `capturePaymentWorkflow` returns early once
-   `captured_at` is set (`payment-module.ts:789-790`) — but `getWebhookActionAndData` must stay side-effect-free
-   and purely derive its result from the retrieved order.
+1. **Duplicate webhook delivery was observed.** `ORDER_AUTHORISED` and `ORDER_COMPLETED` each arrived **twice**
+   for a single payment, byte-identical, despite the listener returning HTTP 200 promptly. One run does not
+   prove an at-least-once *guarantee*, and the cause is unconfirmed — retry, duplicate dispatch, or tunnel
+   behaviour are all consistent with the observation. The design implication is the same either way:
+   **handlers must be idempotent.** Medusa is protected — `capturePaymentWorkflow` returns early once
+   `captured_at` is set (`payment-module.ts:789-790`) — but `getWebhookActionAndData` must stay
+   side-effect-free and derive its result purely from the retrieved order.
 2. **`ORDER_AUTHORISED` fires even under `capture_mode: "automatic"`.** The order really does pass through
    `authorised` on the way to `completed`. This empirically confirms §3: `authorised` must map to
    `pending_authorization`, and `ORDER_AUTHORISED → NOT_SUPPORTED`. Mapping it to `authorized` would expose a
@@ -112,8 +114,10 @@ exactly one match (so §5.3 orphan recovery works); `capture_mode: "automatic"` 
    use the order `amount`, never `settled_amount` — otherwise every capture under-reports by the acquiring fee.
 4. **Retrieved orders contain PII.** `payments[].payment_method.cardholder_name`, `payer.email`, card BIN, last
    four and expiry are all returned. **Do not persist the full order into `payment.data`** — §3's
-   "return full order as `data`" is corrected: store only `id`, `state`, `amount`, `currency` and the reference.
-   Never log the raw order.
+   "return full order as `data`" is corrected: store only `id`, `state`, `amount`, `currency`, the reference,
+   and `checkout_url`. `checkout_url` is **required** in the projection — `authorizePayment().data` replaces
+   `PaymentSession.data`, so omitting it would strip the URL the storefront needs to redirect to. Never log the
+   raw order.
 5. **List responses are wrapped**: `GET /api/orders` returns `{ "orders": [...] }`, not a bare array. The §5.3
    recovery path must unwrap it.
 6. **`signing_secret` is returned on webhook *create* but not on *list*.** The spec claims it is "included in
@@ -149,7 +153,7 @@ Medusa designed this path for exactly this case (`abstract.ts:227-236`):
 | Method | Behaviour |
 |---|---|
 | `initiatePayment` | `POST /api/orders` + `merchant_order_data.reference`, `redirect_url`, `expire_pending_after: "PT30M"` |
-| `authorizePayment` / `getPaymentStatus` / `retrievePayment` | `GET /api/orders/{id}` → map. Persist a **minimal projection** (`id`, `state`, `amount`, `currency`, reference) — never the full order, which carries PII |
+| `authorizePayment` / `getPaymentStatus` / `retrievePayment` | `GET /api/orders/{id}` → map. Persist a **minimal projection** (`id`, `state`, `amount`, `currency`, reference, `checkout_url`) — never the full order, which carries PII |
 | `capturePayment` | verify `completed`; **no capture call** |
 | `cancelPayment` | `POST /api/orders/{id}/cancel` |
 | `deletePayment` | cancel when an id is present, else no-op |

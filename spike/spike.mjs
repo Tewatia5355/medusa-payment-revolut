@@ -10,6 +10,8 @@ const API_VERSION = process.env.REVOLUT_API_VERSION ?? "2026-04-20"
 const KEY = process.env.REVOLUT_SECRET_KEY
 const BASE = "https://sandbox-merchant.revolut.com"
 
+// Probe-only. Math.round on a float is wrong for values like 1.005 (returns 100, not 101).
+// v1.0.0 must use MathBN/BigNumber, per PLAN.md §5.5. Safe here only because the amount is hardcoded.
 const minor = (amount, currency) => {
   const d = new Intl.NumberFormat("en", { style: "currency", currency })
     .resolvedOptions().maximumFractionDigits
@@ -58,26 +60,50 @@ async function create() {
 function listen() {
   const secret = process.env.REVOLUT_WEBHOOK_SECRET
   const port = Number(process.env.PORT ?? 4000)
+  const MAX_BODY = 64 * 1024   // webhook payloads are tiny; refuse to buffer more than this
+
+  // An empty or absent secret is a usable HMAC key, so every forged signature would verify.
+  if (!secret) {
+    console.error("set REVOLUT_WEBHOOK_SECRET (wsk_...) — refusing to listen without it")
+    process.exit(1)
+  }
 
   http.createServer((req, res) => {
     if (req.method !== "POST") return res.writeHead(200).end("ok")   // health checks must not kill the listener
 
     const chunks = []
-    req.on("data", (c) => chunks.push(c))
+    let size = 0
+    req.on("data", (c) => {
+      size += c.length
+      if (size > MAX_BODY) { res.writeHead(413).end(); return req.destroy() }
+      chunks.push(c)
+    })
+
     req.on("end", () => {
+      if (res.writableEnded) return
       const raw = Buffer.concat(chunks).toString("utf8")   // exact bytes, never re-serialized
+
+      // Nothing derived from the body may be parsed, logged or acted on before this passes.
       const result = verify(raw, req.headers, secret)
+      if (!result.ok) {
+        console.log(`\n[!] rejected unverified request: ${result.reason}`)
+        return res.writeHead(401).end()
+      }
 
       let event
       try {
         event = JSON.parse(raw)
       } catch {
-        console.log(`\n[!] non-JSON body (${raw.length} bytes), signature ${result.ok ? "verified" : "failed"}`)
+        console.log(`\n[!] signed but non-JSON body (${raw.length} bytes)`)
+        return res.writeHead(400).end()
+      }
+      if (event === null || typeof event !== "object" || Array.isArray(event)) {
+        console.log(`\n[!] signed but not a JSON object`)
         return res.writeHead(400).end()
       }
 
       console.log(`\n[2] ${event.event}  order=${event.order_id}`)
-      console.log(`    signature      : ${result.ok ? "VERIFIED" : "FAILED - " + result.reason}`)
+      console.log(`    signature      : VERIFIED`)
       console.log(`    ext ref present: ${"merchant_order_ext_ref" in event ? "YES -> " + event.merchant_order_ext_ref : "NO (must retrieve the order)"}`)
       console.log(`    amount present : ${"amount" in event ? "YES" : "NO (must retrieve the order)"}`)
       console.log(`    raw: ${raw}`)
