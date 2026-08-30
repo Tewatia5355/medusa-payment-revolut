@@ -58,6 +58,11 @@ type RevolutOrder = {
 // optional version resolves to the earliest supported one.
 const API_VERSION = "2026-04-20"
 
+// Medusa's authorizePaymentSession catches provider errors and rethrows a plain Error, losing
+// the MedusaError type. The webhook route needs to know a drift conflict is permanent rather
+// than transient, so the marker travels in the message instead.
+export const CONFLICT_MARKER = "[revolut:conflict]"
+
 // `authorised` is transient under automatic capture (processing -> authorised -> completed).
 // Mapping it to AUTHORIZED would expose a capturable Payment during that window, and
 // CapturePaymentInput carries no amount, so a partial capture would charge the full order.
@@ -264,13 +269,13 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
     if (typeof amount === "number" && order.amount !== amount) {
       throw new MedusaError(
         MedusaError.Types.CONFLICT,
-        `Revolut order ${order.id} is ${order.amount} but the session expects ${amount}`
+        `${CONFLICT_MARKER} Revolut order ${order.id} is ${order.amount} but the session expects ${amount}`
       )
     }
     if (typeof currency === "string" && order.currency !== currency) {
       throw new MedusaError(
         MedusaError.Types.CONFLICT,
-        `Revolut order ${order.id} is ${order.currency} but the session expects ${currency}`
+        `${CONFLICT_MARKER} Revolut order ${order.id} is ${order.currency} but the session expects ${currency}`
       )
     }
   }

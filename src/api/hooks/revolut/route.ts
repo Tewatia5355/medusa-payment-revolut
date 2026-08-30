@@ -6,6 +6,7 @@ import {
   Modules,
   PaymentActions,
 } from "@medusajs/framework/utils"
+import { CONFLICT_MARKER } from "../../../providers/revolut/service"
 
 // Provider id without the `pp_` prefix, which the Payment Module prepends.
 const PROVIDER = "revolut_revolut"
@@ -17,6 +18,46 @@ const PROVIDER = "revolut_revolut"
 // Medusa's order stays awaiting payment, and Revolut will not retry because it already got a 200.
 //
 // This route does the same work synchronously and answers with a status Revolut can act on.
+// Revolut retries any error response three more times at ten-minute intervals and accepts
+// anything in 200-399. Two failures are permanent and must never be retried: a bad signature will
+// never become valid, and a drifted order (CONFLICT) will never reconcile itself. Everything else
+// — a 5xx or timeout reaching Revolut — is transient and should be retried.
+const respondToFailure = (
+  req: MedusaRequest,
+  res: MedusaResponse,
+  err: unknown
+): void => {
+  const type = err instanceof MedusaError ? err.type : undefined
+  const message = (err as Error)?.message ?? String(err)
+
+  // Medusa rethrows provider errors from inside a workflow as plain Errors, so the type is only
+  // available when the failure came from getWebhookActionAndData. Fall back to the marker.
+  if (
+    type === MedusaError.Types.CONFLICT ||
+    message.includes(CONFLICT_MARKER)
+  ) {
+    // Money may sit captured at Revolut with nothing recorded here. That needs an operator,
+    // not a retry storm that ends in silence.
+    req.scope
+      .resolve(ContainerRegistrationKeys.LOGGER)
+      .error(
+        `Revolut webhook conflict, manual reconciliation required: ${message}`
+      )
+    res.sendStatus(204)
+    return
+  }
+
+  if (type === MedusaError.Types.UNAUTHORIZED) {
+    req.scope
+      .resolve(ContainerRegistrationKeys.LOGGER)
+      .warn(`Rejected Revolut webhook: ${message}`)
+    res.sendStatus(204)
+    return
+  }
+
+  res.status(503).send(message)
+}
+
 export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
   const paymentModule = req.scope.resolve(Modules.PAYMENT)
 
@@ -33,21 +74,7 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
       },
     })
   } catch (err) {
-    // Revolut retries any error response three more times at ten-minute intervals and accepts
-    // anything in 200-399. A bad signature will never become valid, so retrying it is pointless
-    // noise: log it and acknowledge. Everything else — a 5xx or timeout retrieving the order —
-    // is transient and must be retried.
-    const unauthorized =
-      err instanceof MedusaError && err.type === MedusaError.Types.UNAUTHORIZED
-    if (unauthorized) {
-      req.scope
-        .resolve(ContainerRegistrationKeys.LOGGER)
-        .warn(`Rejected Revolut webhook: ${(err as Error).message}`)
-      res.sendStatus(204)
-      return
-    }
-    res.status(503).send((err as Error).message)
-    return
+    return respondToFailure(req, res, err)
   }
 
   // Acknowledge anything not actionable so Revolut stops resending it.
@@ -60,10 +87,10 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
   }
 
   try {
+    // authorizePayment runs inside this workflow, so a drift CONFLICT surfaces here, not above.
     await processPaymentWorkflow(req.scope).run({ input: processed })
   } catch (err) {
-    res.status(503).send((err as Error).message)
-    return
+    return respondToFailure(req, res, err)
   }
 
   res.sendStatus(200)
