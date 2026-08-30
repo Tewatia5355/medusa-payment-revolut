@@ -23,6 +23,7 @@
     "./*": "./.medusa/server/src/*.js"
   },
   "scripts": {
+    "prepack": "npm run build",
     "build": "medusa plugin:build",
     "dev": "medusa plugin:develop",
     "test": "jest --passWithNoTests src",
@@ -44,9 +45,13 @@
   },
   "peerDependencies": {
     "@medusajs/framework": "2.19.0",
-    "@medusajs/medusa": "2.19.0"
+    "@medusajs/medusa": "2.19.0",
+    "@medusajs/core-flows": "2.19.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@medusajs/core-flows": "2.19.0"
   }
 }

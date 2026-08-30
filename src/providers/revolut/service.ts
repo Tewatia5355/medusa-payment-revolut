@@ -74,13 +74,29 @@ const minorDigits = (currency: string): number =>
     currency: currency.toUpperCase(),
   }).resolvedOptions().maximumFractionDigits ?? 2
 
-export const toMinor = (amount: BigNumberInput, currency: string): number =>
-  Math.round(
+export const toMinor = (amount: BigNumberInput, currency: string): number => {
+  const minor = Math.round(
     new BigNumber(MathBN.mult(amount, 10 ** minorDigits(currency))).numeric
   )
+  // BigNumber.numeric goes through Number, which silently rounds past 2^53.
+  if (!Number.isSafeInteger(minor)) {
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      `Amount ${amount} ${currency} exceeds the safe integer range for minor units`
+    )
+  }
+  return minor
+}
 
-export const fromMinor = (amount: number, currency: string): number =>
-  new BigNumber(MathBN.div(amount, 10 ** minorDigits(currency))).numeric
+export const fromMinor = (amount: number, currency: string): number => {
+  if (!Number.isSafeInteger(amount)) {
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      `Revolut returned amount ${amount} outside the safe integer range`
+    )
+  }
+  return new BigNumber(MathBN.div(amount, 10 ** minorDigits(currency))).numeric
+}
 
 // Retrieved orders carry cardholder name, payer email and card BIN. Only these fields
 // are persisted to PaymentSession/Payment data.
@@ -228,24 +244,37 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
     return { data: project(order) }
   }
 
+  // Revolut only accepts cancellation for pending or uncaptured authorised orders. Reporting
+  // success for any other state is unsafe: Medusa deletes the session (payment-module
+  // deletePaymentSession) or stamps canceled_at regardless of what Revolut actually did.
   async cancelPayment({
     data,
   }: CancelPaymentInput): Promise<CancelPaymentOutput> {
     const id = data?.id
+    // Initiation rollback calls this with the original input, which has no order id.
     if (typeof id !== "string" || !id) {
       return { data }
     }
 
     const order = await this.retrieveOrder(id)
-    if (order.state !== "pending" && order.state !== "authorised") {
-      return { data: project(order) }
+    switch (order.state) {
+      case "pending":
+      case "authorised": {
+        const cancelled = await this.request<RevolutOrder>(
+          `/api/orders/${id}/cancel`,
+          { method: "POST" }
+        )
+        return { data: project(cancelled) }
+      }
+      case "cancelled":
+      case "failed":
+        return { data: project(order) }
+      default:
+        throw new MedusaError(
+          MedusaError.Types.NOT_ALLOWED,
+          `Revolut order ${id} is ${order.state} and cannot be canceled`
+        )
     }
-
-    const cancelled = await this.request<RevolutOrder>(
-      `/api/orders/${id}/cancel`,
-      { method: "POST" }
-    )
-    return { data: project(cancelled) }
   }
 
   // Medusa calls this with the original input.data on initiation rollback, so the order id is

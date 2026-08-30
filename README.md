@@ -54,8 +54,19 @@ order without webhooks, so a missing `webhookSecret` would mean money taken with
 Then:
 
 1. **Enable the provider per region** in Admin. Registration alone does not expose it at checkout.
-2. **Register the webhook** for `ORDER_COMPLETED` at `POST https://your-store.com/hooks/payment/revolut_revolut`
+2. **Register the webhook** for `ORDER_COMPLETED` at `POST https://your-store.com/hooks/revolut`
    and store the returned `wsk_` secret.
+
+### Why not the built-in `/hooks/payment/revolut_revolut`?
+
+The plugin ships its own route because Medusa's built-in one acknowledges with HTTP 200 and hands the event to
+the event bus. The local bus wraps subscribers in a `try/catch` that only logs, and the Redis bus swallows the
+final failed attempt. Processing `ORDER_COMPLETED` requires a second call to Revolut, so any transient failure
+there would lose a captured payment permanently — Revolut has the money, the Medusa order stays awaiting
+payment, and Revolut never retries because it already received a 200.
+
+`/hooks/revolut` does the same work synchronously and answers with a status Revolut can act on: `401` for an
+invalid signature (permanent, stop), `503` for a transient failure (retry), `200` once the payment is recorded.
 
 ## How the flow works
 
@@ -65,7 +76,7 @@ authorizePayment  returns pending_authorization           (no Payment yet)
 cart.complete     order created, payment status "awaiting"
 storefront        redirect to checkout_url
 customer pays on Revolut
-webhook           ORDER_COMPLETED -> verify HMAC -> retrieve order
+webhook           POST /hooks/revolut -> verify HMAC -> retrieve order
 Medusa            Payment created and captured on the existing order
 ```
 
