@@ -1,6 +1,3 @@
-Agent is idle (waiting for messages). agent_id: 0cd1bfab-92ed-42d3-a37d-758a5cf205a9, agent_type: research, status: idle, description: Research Revolut Merchant API, elapsed: 1071s, total_turns: 2, model: gpt-5.6-sol
-
-[Turn 0]
 # Revolut Merchant API brief for a headless payment integration
 
 **Source snapshot:** Merchant OpenAPI `2026-04-20`, repository commit `714395e048f263898e9ccff9545a5b799a0194fa`; Checkout SDK commit `639a9182801e4693a9954f3fdc07ae97647aa839`; examples commit `de907bdd8cbe049d521e11b977c5acdacccddd24`.
@@ -684,7 +681,6 @@ The OpenAPI does **not** expose a supported-currency enum. Revolut's Hosted Chec
 - Legacy `/api/1.0/...` operations are deprecated; target the unversioned `/api/...` paths with the version header.
 - The OpenAPI raw URL uses the repository’s `master` branch, not `main`; the supplied `.../main/yaml/merchant-2026-04-20.yaml` URL currently returns 404.
 
-[Turn 1]
 [Message]
 Correction + head start — I gave you a wrong URL in the brief.
 

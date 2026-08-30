@@ -1,6 +1,3 @@
-Agent is idle (waiting for messages). agent_id: f56ef783-0665-4e4b-bf9c-297a30b95e2c, agent_type: research, status: idle, description: Research Medusa v2 payment provider, elapsed: 622s, total_turns: 1, model: gpt-5.6-sol
-
-[Turn 0]
 # MedusaJS v2 payment-provider contract
 
 **Source baseline:** Medusa **v2.19.0**. The core provider contract files are unchanged on `develop` at commit [`f7317903600e5b64f06c21c29a73e0e569d2fe3a`](https://github.com/medusajs/medusa/commit/f7317903600e5b64f06c21c29a73e0e569d2fe3a). This report excludes all v1 `PaymentService` / `medusa-payment-*` conventions.
