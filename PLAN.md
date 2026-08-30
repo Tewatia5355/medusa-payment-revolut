@@ -2,7 +2,8 @@
 
 **Baselines:** Medusa `v2.19.0` · Revolut Merchant OpenAPI `2026-04-20` · Node ≥20 (full ICU).
 Three GPT-5.6 Sol review passes (2 correctness, 1 ponytail) + Medusa's own contribution guide.
-Every decision cites source read directly. Open questions marked **UNVERIFIED**.
+Every decision cites source read directly, and as of 2026-08-30 the three previously **UNVERIFIED** facts are
+confirmed against live Sandbox (§3, v0.1.0).
 
 Supersedes `PLAN-v1/v2/v3.md`, which contained money bugs (§7).
 
@@ -69,7 +70,7 @@ currently blocked.
 
 | Version | Capability | Status |
 |---|---|---|
-| **v0.1.0** | Sandbox spike — settle the UNVERIFIED facts | do first, do not publish |
+| **v0.1.0** | Sandbox spike — settle the UNVERIFIED facts | ✅ **complete, gate passed** |
 | **v1.0.0** | Hosted checkout, automatic capture, webhooks, cancel | the real deliverable |
 | **v1.1.0** | Refunds with reconciliation | needs design (§3.3) |
 | **v1.2.0** | Embedded checkout (`@revolut/checkout`) | optional, demand-driven |
@@ -80,19 +81,47 @@ currently blocked.
 
 ## 3. Version detail
 
-### v0.1.0 — Spike (~40 LOC, unpublished)
+### v0.1.0 — Spike — ✅ **COMPLETE, gate passed** (Sandbox, 2026-08-30)
 
-Not a release. A throwaway script against Sandbox proving the three things the plan currently assumes.
+Ran end-to-end against Revolut Sandbox with a real £12.34 card payment (3DS verified). All three questions
+resolved; the gate is passed and v1.0.0 is unblocked.
 
-1. `POST /api/orders` with `Revolut-Api-Version: 2026-04-20` is accepted.
-   **UNVERIFIED:** spec permits it; the public changelog stops at `2026-03-12`. Fall back if rejected.
-2. Pay the order; capture the `ORDER_COMPLETED` webhook; confirm it carries `merchant_order_ext_ref`.
-   **UNVERIFIED:** the field is *optional* in the webhook schema (`merchant.yaml:14333-14354`) — only `event`
-   and `order_id` are required.
-3. Verify one real signature end-to-end against the recorded raw bytes.
+| # | Question | Result |
+|---|---|---|
+| 1 | Is `Revolut-Api-Version: 2026-04-20` accepted? | ✅ **HTTP 201.** Live despite the public changelog stopping at `2026-03-12`. `2026-03-12` also works. Keep the pin. |
+| 2 | Does `ORDER_COMPLETED` carry `merchant_order_ext_ref`? | ✅ **Yes**, on both `ORDER_AUTHORISED` and `ORDER_COMPLETED`. The correlation design in §4 holds. |
+| 3 | Does a real signature verify over raw bytes? | ✅ **Verified** on every genuine delivery; the health-check probe correctly failed. |
 
-**Gate:** do not start v1.0.0 until all three pass. Two plan rewrites already came from assumptions that
-looked reasonable and were wrong; this is the cheapest place to be wrong again.
+Also confirmed live: `merchant_order_data.reference` round-trips; `?merchant_order_data_reference=` returns
+exactly one match (so §5.3 orphan recovery works); `capture_mode: "automatic"` and
+`expire_pending_after: "PT30M"` are accepted; order `state` on create is `pending`; amounts are minor units.
+
+**Six things Sandbox revealed that the OpenAPI spec did not:**
+
+1. **Webhook delivery is at-least-once.** `ORDER_AUTHORISED` and `ORDER_COMPLETED` each arrived **twice** for a
+   single payment, byte-identical, despite the listener returning HTTP 200 promptly. The mechanism is not
+   documented; treat delivery as duplicable. Medusa is protected — `capturePaymentWorkflow` returns early once
+   `captured_at` is set (`payment-module.ts:789-790`) — but `getWebhookActionAndData` must stay side-effect-free
+   and purely derive its result from the retrieved order.
+2. **`ORDER_AUTHORISED` fires even under `capture_mode: "automatic"`.** The order really does pass through
+   `authorised` on the way to `completed`. This empirically confirms §3: `authorised` must map to
+   `pending_authorization`, and `ORDER_AUTHORISED → NOT_SUPPORTED`. Mapping it to `authorized` would expose a
+   capturable Payment during the window and reopen the §5 partial-capture bug.
+3. **`settled_amount` ≠ `amount`.** The completed order reported `amount: 1234` but
+   `settled_amount: 1202`, with `fees: [{ type: "acquiring", amount: 32 }]`. `WebhookActionData.amount` **must**
+   use the order `amount`, never `settled_amount` — otherwise every capture under-reports by the acquiring fee.
+4. **Retrieved orders contain PII.** `payments[].payment_method.cardholder_name`, `payer.email`, card BIN, last
+   four and expiry are all returned. **Do not persist the full order into `payment.data`** — §3's
+   "return full order as `data`" is corrected: store only `id`, `state`, `amount`, `currency` and the reference.
+   Never log the raw order.
+5. **List responses are wrapped**: `GET /api/orders` returns `{ "orders": [...] }`, not a bare array. The §5.3
+   recovery path must unwrap it.
+6. **`signing_secret` is returned on webhook *create* but not on *list*.** The spec claims it is "included in
+   all webhook responses" (`merchant.yaml:13717`) — that is wrong. Capture it at registration or rotate it.
+
+**The spike also caught a bug in its own listener:** an empty-body request crashed the process through an
+unguarded `JSON.parse`. In production any health probe or scanner would have killed webhook processing. Fixed;
+v1.0.0's handler must tolerate non-JSON and non-POST input.
 
 ### v1.0.0 — Hosted checkout, automatic capture
 
@@ -120,7 +149,7 @@ Medusa designed this path for exactly this case (`abstract.ts:227-236`):
 | Method | Behaviour |
 |---|---|
 | `initiatePayment` | `POST /api/orders` + `merchant_order_data.reference`, `redirect_url`, `expire_pending_after: "PT30M"` |
-| `authorizePayment` / `getPaymentStatus` / `retrievePayment` | `GET /api/orders/{id}` → map |
+| `authorizePayment` / `getPaymentStatus` / `retrievePayment` | `GET /api/orders/{id}` → map. Persist a **minimal projection** (`id`, `state`, `amount`, `currency`, reference) — never the full order, which carries PII |
 | `capturePayment` | verify `completed`; **no capture call** |
 | `cancelPayment` | `POST /api/orders/{id}/cancel` |
 | `deletePayment` | cancel when an id is present, else no-op |

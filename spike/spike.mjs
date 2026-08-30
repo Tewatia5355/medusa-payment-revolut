@@ -60,12 +60,21 @@ function listen() {
   const port = Number(process.env.PORT ?? 4000)
 
   http.createServer((req, res) => {
+    if (req.method !== "POST") return res.writeHead(200).end("ok")   // health checks must not kill the listener
+
     const chunks = []
     req.on("data", (c) => chunks.push(c))
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf8")   // exact bytes, never re-serialized
       const result = verify(raw, req.headers, secret)
-      const event = JSON.parse(raw)
+
+      let event
+      try {
+        event = JSON.parse(raw)
+      } catch {
+        console.log(`\n[!] non-JSON body (${raw.length} bytes), signature ${result.ok ? "verified" : "failed"}`)
+        return res.writeHead(400).end()
+      }
 
       console.log(`\n[2] ${event.event}  order=${event.order_id}`)
       console.log(`    signature      : ${result.ok ? "VERIFIED" : "FAILED - " + result.reason}`)
