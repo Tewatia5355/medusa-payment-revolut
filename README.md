@@ -1,55 +1,105 @@
 # medusa-payment-revolut
 
-A Revolut Merchant API payment provider for [MedusaJS v2](https://medusajs.com).
+Revolut Merchant API payment provider for [Medusa v2](https://medusajs.com).
 
-**Status: pre-v1. The v0.1.0 spike is written; the provider is not.**
+Hosted checkout, automatic capture, signed webhooks. No runtime dependencies.
+
+> **Status: v1.0.0, unpublished.** Verified against live Revolut Sandbox with a real 3DS card payment.
+> Not yet exercised in production.
 
 ## Why this exists
 
-There is no Revolut integration for any modern headless commerce platform. Verified across Medusa, Vendure,
-Saleor, Sylius, Spree, Solidus and Bagisto — all zero. Revolut officially supports six no-code platforms
-(WooCommerce, Magento 2, PrestaShop, Shopify, BigCommerce, OpenCart) and no headless ones.
+There was no Revolut integration for any modern headless commerce platform — verified across Medusa, Vendure,
+Saleor, Sylius, Spree, Solidus and Bagisto. Revolut officially supports six no-code platforms (WooCommerce,
+Magento 2, PrestaShop, Shopify, BigCommerce, OpenCart) and no headless ones.
 
-Nobody is working on it either: zero PRs, zero issues, zero discussions in `medusajs/*`; nothing on GitLab; and
-the one npm package that ever claimed the name, `medusa-payment-revolut`, was published on 2024-10-02 at
-18:48 UTC and unpublished 19 minutes later with no linked repository.
+## Install
 
-## Where it stands
+```bash
+npm install medusa-payment-revolut
+```
 
-| Version | Capability | Status |
-|---|---|---|
-| **v0.1.0** | Sandbox spike — settle three unverified facts | code written, needs Sandbox credentials |
-| **v1.0.0** | Hosted checkout, automatic capture, webhooks, cancel | not started — gated on v0.1.0 |
-| v1.1.0 | Refunds with reconciliation | deferred (double-refund risk) |
-| v1.2.0 | Embedded checkout | demand-driven |
-| v2.0.0 | Manual / partial capture | blocked on Medusa core |
+Requires Medusa `2.19.0` and Node 20+.
 
-See [`PLAN.md`](./PLAN.md) for the full plan and [`spike/`](./spike) to run the gate.
+## Configure
 
-## How this was built
+```ts
+// medusa-config.ts
+module.exports = defineConfig({
+  modules: [
+    {
+      resolve: "@medusajs/medusa/payment",
+      options: {
+        providers: [
+          {
+            resolve: "medusa-payment-revolut/providers/revolut",
+            id: "revolut",
+            options: {
+              apiKey: process.env.REVOLUT_SECRET_KEY,        // sk_...
+              webhookSecret: process.env.REVOLUT_WEBHOOK_SECRET, // wsk_...
+              redirectUrl: process.env.REVOLUT_RETURN_URL,
+              sandbox: process.env.NODE_ENV !== "production",
+            },
+          },
+        ],
+      },
+    },
+  ],
+})
+```
 
-Every design decision cites source read directly — Medusa `v2.19.0` and the Revolut Merchant OpenAPI
-`2026-04-20` — rather than documentation prose or search results. Public guidance for this task is largely
-wrong: most of it describes the Medusa **v1** provider API, which does not exist in v2.
+All three secrets are required — the provider refuses to start without them. This flow cannot complete an
+order without webhooks, so a missing `webhookSecret` would mean money taken with no order.
 
-The plan went through three review passes and was rewritten three times. Each pass found a way the integration
-could take money incorrectly:
+Then:
 
-1. **Partial capture overcharges.** `CapturePaymentInput` is an empty interface, so the amount never reaches
-   the provider; Revolut treats an omitted capture amount as *capture everything* and voids the remainder.
-   A £40 capture against a £100 authorization charges £100. → manual capture cut.
-2. **Captured money with no order.** Redirecting before cart completion, then completing after payment, hits
-   `continueOnPermanentFailure: true` — Medusa keeps the payment even when order creation fails, and the
-   compensation path cannot cancel an already-completed Revolut order. → order created *before* redirect,
-   using `pending_authorization`.
-3. **Double refunds.** On an ambiguous failure Medusa deletes its Refund record; a retry gets a new refund id,
-   and that id *is* the idempotency key. → refunds deferred to v1.1.0.
+1. **Enable the provider per region** in Admin. Registration alone does not expose it at checkout.
+2. **Register the webhook** for `ORDER_COMPLETED` at `POST https://your-store.com/hooks/payment/revolut_revolut`
+   and store the returned `wsk_` secret.
 
-A fourth pass corrected the distribution assumption: this ships as a standalone npm package, not a core PR.
-Medusa core contains exactly one payment provider (`payment-stripe`), and `CONTRIBUTING.md` states external
-PRs are rejected if they do not align with the roadmap.
+## How the flow works
 
-Research briefs with full citations are in [`docs/`](./docs).
+```
+initiatePayment   POST /api/orders            -> { id, token, checkout_url }
+authorizePayment  returns pending_authorization           (no Payment yet)
+cart.complete     order created, payment status "awaiting"
+storefront        redirect to checkout_url
+customer pays on Revolut
+webhook           ORDER_COMPLETED -> verify HMAC -> retrieve order
+Medusa            Payment created and captured on the existing order
+```
+
+**The order is created before the customer pays.** This is deliberate. Redirecting first and completing the
+cart afterwards hits `continueOnPermanentFailure: true` in Medusa's `process-payment` workflow, which keeps
+the captured payment even when order creation fails — and a `completed` Revolut order cannot be cancelled.
+
+## Storefront
+
+The default `nextjs-starter-medusa` has no provider UI registry, so it needs three changes:
+
+1. Add a `paymentInfoMap` entry for `pp_revolut_revolut`.
+2. Call `cart.complete` **before** redirecting to `checkout_url`.
+3. Handle sessions with status `pending_authorization`; the starter only looks for `pending`.
+
+## Limitations
+
+| Not supported | Why |
+|---|---|
+| **Refunds** | `refundPayment` throws. Revolut accepts refunds asynchronously, and Medusa deletes its Refund record when the provider throws — a retry generates a new refund id, which is also the idempotency key, so an ambiguous failure could refund twice. Refund from the Revolut dashboard. Tracked for v1.1.0. |
+| **Manual / partial capture** | `CapturePaymentInput` carries no amount, so the provider cannot know how much to capture. Revolut treats an omitted amount as *capture everything* and voids the remainder, so a £40 partial capture against a £100 authorization would charge £100. Needs a Medusa core change. |
+| Subscriptions, saved cards, disputes, Pay by Bank, terminals | Out of scope. |
+
+## Development
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+`spike/` holds the v0.1.0 Sandbox probe used to verify the API's real behaviour before this was written.
+`PLAN.md` records the versioned plan and the defects each review pass found.
 
 ## License
 

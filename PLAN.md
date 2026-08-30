@@ -71,7 +71,7 @@ currently blocked.
 | Version | Capability | Status |
 |---|---|---|
 | **v0.1.0** | Sandbox spike — settle the UNVERIFIED facts | ✅ **complete, gate passed** |
-| **v1.0.0** | Hosted checkout, automatic capture, webhooks, cancel | the real deliverable |
+| **v1.0.0** | Hosted checkout, automatic capture, webhooks, cancel | ✅ **implemented**, typechecks and builds; needs production use |
 | **v1.1.0** | Refunds with reconciliation | needs design (§3.3) |
 | **v1.2.0** | Embedded checkout (`@revolut/checkout`) | optional, demand-driven |
 | **v2.0.0** | Manual / partial capture | **blocked on Medusa core** (§5) |
@@ -127,7 +127,11 @@ exactly one match (so §5.3 orphan recovery works); `capture_mode: "automatic"` 
 unguarded `JSON.parse`. In production any health probe or scanner would have killed webhook processing. Fixed;
 v1.0.0's handler must tolerate non-JSON and non-POST input.
 
-### v1.0.0 — Hosted checkout, automatic capture
+### v1.0.0 — Hosted checkout, automatic capture — ✅ implemented
+
+Built as a publishable plugin: `src/providers/revolut/{index,service,webhook}.ts`, 14 jest tests, clean
+`tsc --noEmit` against Medusa v2.19.0, and `medusa plugin:build` produces a loadable provider whose
+`ModuleProvider` export exposes all 10 methods. `npm pack` is 10 files / 33KB with no dev files.
 
 **Flow** (order created *before* the customer pays — see §7 for why):
 
