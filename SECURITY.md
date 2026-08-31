@@ -9,6 +9,9 @@ Use GitHub's [private vulnerability reporting](https://github.com/Tewatia5355/me
 on this repository. Please do **not** open a public issue, pull request, or discussion for a security
 problem before it is fixed.
 
+If that link is unavailable, open an issue containing only "requesting a private security contact" — no
+details, no reproduction — and I will open a private channel.
+
 Include, if you can: what you did, what happened, what you expected, and the affected version.
 
 ## Scope
