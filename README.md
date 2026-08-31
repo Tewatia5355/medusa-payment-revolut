@@ -1,11 +1,17 @@
 # medusa-payment-revolut
 
-Revolut Merchant API payment provider for [Medusa v2](https://medusajs.com).
+An **unofficial** Revolut Merchant API payment provider for [Medusa v2](https://medusajs.com).
 
 Hosted checkout, automatic capture, signed webhooks. No runtime dependencies.
 
-> **Status: v1.0.0, unpublished.** Verified against live Revolut Sandbox with a real 3DS card payment.
-> Not yet exercised in production.
+> **Not affiliated with, endorsed by, or supported by Revolut or Medusa.** "Revolut" and "Medusa" are
+> trademarks of their respective owners and are used here only to describe what this software is compatible
+> with. This project ships no Revolut branding or logos.
+
+> **Status: v1.0.0, unpublished and not yet used in production.** Verified against a live Medusa 2.19.0
+> instance and, at the v0.1.0 spike stage, against real Revolut Sandbox with a 3DS card payment. The current
+> flow has been exercised against a mock that replays recorded Sandbox responses, not against Revolut itself.
+> Read [Limitations](#limitations) before pointing this at real money, and test in Sandbox first.
 
 ## Why this exists
 

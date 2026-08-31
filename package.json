@@ -1,7 +1,7 @@
 {
   "name": "medusa-payment-revolut",
   "version": "1.0.0",
-  "description": "Revolut Merchant API payment provider for Medusa v2",
+  "description": "Unofficial Revolut Merchant API payment provider for Medusa v2. Not affiliated with or endorsed by Revolut.",
   "license": "MIT",
   "repository": {
     "type": "git",
