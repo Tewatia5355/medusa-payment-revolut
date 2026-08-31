@@ -60,10 +60,30 @@ describe("webhook signature", () => {
     expect(ok(BODY, h(), undefined as unknown as string, NOW)).toBe(false)
   })
 
-  it("enforces the five-minute window and rejects future timestamps", () => {
+  it("enforces the five-minute staleness window", () => {
     expect(ok(BODY, h(), SECRET, Number(TS) + 299_000)).toBe(true)
     expect(ok(BODY, h(), SECRET, Number(TS) + 301_000)).toBe(false)
-    expect(ok(BODY, h(), SECRET, Number(TS) - 1_000)).toBe(false)
+  })
+
+  // Measured against live Revolut Sandbox: genuine webhooks arrived 3ms and 32ms in the future
+  // against an NTP-synced clock. Revolut's reference impl uses age >= 0, which drops them.
+  it("tolerates the small clock skew real webhooks actually exhibit", () => {
+    expect(ok(BODY, h(), SECRET, Number(TS) - 3)).toBe(true)
+    expect(ok(BODY, h(), SECRET, Number(TS) - 32)).toBe(true)
+    expect(ok(BODY, h(), SECRET, Number(TS) - 59_000)).toBe(true)
+    expect(ok(BODY, h(), SECRET, Number(TS) - 61_000)).toBe(false)
+  })
+
+  // The route retries a timestamp rejection but permanently acknowledges a forged one, so the
+  // reasons must stay distinguishable.
+  it("reports timestamp problems distinctly from a bad signature", () => {
+    const reason = (...a: Parameters<typeof verifySignature>) => {
+      const r = verifySignature(...a)
+      return r.ok ? "" : r.reason
+    }
+    expect(reason(BODY, h(), SECRET, Number(TS) + 400_000)).toContain("stale")
+    expect(reason(BODY, h(), SECRET, Number(TS) - 120_000)).toContain("future")
+    expect(reason(BODY, h(), "wsk_wrong", NOW)).not.toContain("timestamp")
   })
 
   it("rejects timestamps that Number() would silently coerce", () => {

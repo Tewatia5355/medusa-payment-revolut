@@ -390,8 +390,15 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
       this.config.webhookSecret
     )
     if (!verified.ok) {
+      // A bad signature is forged and will never become valid, so it is terminal. A timestamp
+      // rejection is not: it can be clock skew or a delayed delivery, and Revolut may resend with
+      // a fresh timestamp. Acknowledging those would silently discard a real payment, so they are
+      // raised as retryable instead.
+      const retryable = verified.reason.includes("timestamp")
       throw new MedusaError(
-        MedusaError.Types.UNAUTHORIZED,
+        retryable
+          ? MedusaError.Types.UNEXPECTED_STATE
+          : MedusaError.Types.UNAUTHORIZED,
         `Rejected Revolut webhook: ${verified.reason}`
       )
     }

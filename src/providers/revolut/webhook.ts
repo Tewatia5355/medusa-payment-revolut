@@ -5,6 +5,11 @@ import crypto from "node:crypto"
 const SIGNATURE = /^v1=[0-9a-f]{64}$/
 const TIMESTAMP = /^[0-9]+$/
 const TOLERANCE_MS = 300_000
+// Revolut's reference implementation rejects any future timestamp, but measured against live
+// Sandbox its timestamps arrive a few milliseconds ahead of a clock that is otherwise NTP-synced
+// (observed -3ms and -32ms). A strict `age >= 0` therefore drops genuine webhooks, so allow a
+// bounded skew while keeping the documented staleness limit.
+const CLOCK_SKEW_MS = 60_000
 
 export type VerifyResult = { ok: true } | { ok: false; reason: string }
 
@@ -46,10 +51,17 @@ export function verifySignature(
   // Digits only; Number() would silently accept "", " ", "+1" and "1e3".
   if (!TIMESTAMP.test(ts)) return { ok: false, reason: "malformed timestamp" }
 
-  // Revolut's reference implementation rejects future timestamps too.
   const age = now - Number(ts)
-  if (!Number.isFinite(age) || age < 0 || age > TOLERANCE_MS) {
-    return { ok: false, reason: "timestamp outside tolerance" }
+  if (!Number.isFinite(age)) {
+    return { ok: false, reason: "malformed timestamp" }
+  }
+  // Distinct reasons: the caller decides whether to retry, and a stale delivery is not the same
+  // problem as one from the future.
+  if (age > TOLERANCE_MS) {
+    return { ok: false, reason: `stale timestamp (${age}ms old)` }
+  }
+  if (age < -CLOCK_SKEW_MS) {
+    return { ok: false, reason: `future timestamp (${-age}ms ahead)` }
   }
 
   // Two updates so a Buffer is hashed byte-for-byte; interpolating it would decode as
