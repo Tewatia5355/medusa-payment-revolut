@@ -8,9 +8,9 @@ Hosted checkout, automatic capture, signed webhooks. No runtime dependencies.
 > trademarks of their respective owners and are used here only to describe what this software is compatible
 > with. This project ships no Revolut branding or logos.
 
-> **Status: v1.0.0, unpublished and not yet used in production.** Verified against a live Medusa 2.19.0
-> instance and, at the v0.1.0 spike stage, against real Revolut Sandbox with a 3DS card payment. The current
-> flow has been exercised against a mock that replays recorded Sandbox responses, not against Revolut itself.
+> **Status: v1.0.0, unpublished and not yet used in production.** The full flow is verified against a live
+> Medusa 2.19.0 instance and against **real Revolut Sandbox**, including genuinely Revolut-signed webhooks
+> from real card payments. It has not yet run against production Revolut or served a real customer.
 > Read [Limitations](#limitations) before pointing this at real money, and test in Sandbox first.
 
 ## Why this exists
