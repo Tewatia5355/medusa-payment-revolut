@@ -10,7 +10,6 @@ import http from "node:http"
 import crypto from "node:crypto"
 
 const PORT = Number(process.env.PORT ?? 4555)
-const WEBHOOK_SECRET = process.env.MOCK_WEBHOOK_SECRET ?? "wsk_mocksecret"
 
 const orders = new Map()
 const calls = []
@@ -40,23 +39,6 @@ const makeOrder = (body) => {
     redirect_url: body.redirect_url,
     authorisation_type: "final",
     merchant_order_data: body.merchant_order_data ?? {},
-  }
-}
-
-// Sent by Revolut once a payment completes. Deliberately carries no amount, matching reality.
-export const signedWebhook = (event, orderId, ref, secret = WEBHOOK_SECRET) => {
-  const body = JSON.stringify({
-    event,
-    order_id: orderId,
-    merchant_order_ext_ref: ref,
-  })
-  const ts = String(Date.now())
-  const sig =
-    "v1=" +
-    crypto.createHmac("sha256", secret).update(`v1.${ts}.${body}`).digest("hex")
-  return {
-    body,
-    headers: { "revolut-request-timestamp": ts, "revolut-signature": sig },
   }
 }
 

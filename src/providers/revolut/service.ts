@@ -45,7 +45,6 @@ type OrderState =
 
 type RevolutOrder = {
   id: string
-  token: string
   type: string
   state: OrderState
   amount: number
@@ -57,6 +56,10 @@ type RevolutOrder = {
 // Pinned, not configurable. The header is required on these endpoints and an omitted
 // optional version resolves to the earliest supported one.
 const API_VERSION = "2026-04-20"
+
+// Without a deadline a stalled connection holds the webhook handler open, delaying the 503 that
+// tells Revolut to redeliver.
+const REQUEST_TIMEOUT_MS = 15_000
 
 // Medusa's authorizePaymentSession catches provider errors and rethrows a plain Error, losing
 // the MedusaError type. The webhook route needs to know a drift conflict is permanent rather
@@ -146,6 +149,7 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
     init: { method?: string; body?: unknown; idempotencyKey?: string } = {}
   ): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       method: init.method ?? "GET",
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
@@ -320,8 +324,8 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
   async cancelPayment({
     data,
   }: CancelPaymentInput): Promise<CancelPaymentOutput> {
-    const id = data?.id
     // Initiation rollback calls this with the original input, which has no order id.
+    const id = data?.id
     if (typeof id !== "string" || !id) {
       return { data }
     }
@@ -390,13 +394,8 @@ export default class RevolutPaymentProviderService extends AbstractPaymentProvid
       this.config.webhookSecret
     )
     if (!verified.ok) {
-      // A bad signature is forged and will never become valid, so it is terminal. A timestamp
-      // rejection is not: it can be clock skew or a delayed delivery, and Revolut may resend with
-      // a fresh timestamp. Acknowledging those would silently discard a real payment, so they are
-      // raised as retryable instead.
-      const retryable = verified.reason.includes("timestamp")
       throw new MedusaError(
-        retryable
+        verified.retryable
           ? MedusaError.Types.UNEXPECTED_STATE
           : MedusaError.Types.UNAUTHORIZED,
         `Rejected Revolut webhook: ${verified.reason}`

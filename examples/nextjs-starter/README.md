@@ -61,13 +61,3 @@ starts with `NEXT_REDIRECT` rather than showing it as an error.
 
 The customer comes back to `redirectUrl` from the plugin options. Do **not** treat arriving there as proof of
 payment — re-read the order. The webhook is what confirms it, and it may land before or after the redirect.
-
-## Verified flow
-
-```
-session initiated        status "pending", no checkout_url
-cart.complete            order created, Revolut order created, status pending_authorization
-refetch order            checkout_url present
-redirect                 customer pays at Revolut
-webhook                  payment captured against the existing order
-```

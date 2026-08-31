@@ -61,11 +61,6 @@ const webhook = (event, orderId, ref, secret = SECRET, tsOverride) => {
   })
 }
 
-const paymentRow = async (sessionId) => {
-  const { body } = await store(`/store/payment-collections/${sessionId}`)
-  return body
-}
-
 async function buildCart() {
   const { body: p } = await store("/store/products?limit=1&fields=*variants")
   const variant = p.products[0].variants[0]
@@ -190,7 +185,7 @@ async function duplicateDelivery(ctx) {
 }
 
 async function badSignature(ctx) {
-  console.log("\n3. Forged and stale webhooks are rejected")
+  console.log("\n3. Forged rejected, stale retried, small skew accepted")
   const forged = await webhook(
     "ORDER_COMPLETED",
     ctx.revolutOrderId,
@@ -206,10 +201,26 @@ async function badSignature(ctx) {
     SECRET,
     String(Date.now() - 600_000)
   )
+  // Retryable, not acknowledged: a redelivery may carry a fresh timestamp, and acknowledging
+  // would discard a payment Revolut has already taken.
   check(
-    "stale timestamp rejected",
-    stale.status === 204,
+    "stale timestamp asks for retry",
+    stale.status === 503,
     `HTTP ${stale.status}`
+  )
+
+  // Measured against live Revolut: genuine deliveries run a few ms ahead of an NTP-synced clock.
+  const skewed = await webhook(
+    "ORDER_COMPLETED",
+    ctx.revolutOrderId,
+    ctx.sessionId,
+    SECRET,
+    String(Date.now() + 30)
+  )
+  check(
+    "small future skew still accepted",
+    skewed.status === 200,
+    `HTTP ${skewed.status}`
   )
 
   const unsigned = await fetch(`${MEDUSA}/hooks/revolut`, {

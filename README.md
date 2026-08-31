@@ -15,9 +15,8 @@ Hosted checkout, automatic capture, signed webhooks. No runtime dependencies.
 
 ## Why this exists
 
-There was no Revolut integration for any modern headless commerce platform — verified across Medusa, Vendure,
-Saleor, Sylius, Spree, Solidus and Bagisto. Revolut officially supports six no-code platforms (WooCommerce,
-Magento 2, PrestaShop, Shopify, BigCommerce, OpenCart) and no headless ones.
+Revolut ships official plugins for WooCommerce, Magento 2, PrestaShop, Shopify, BigCommerce and OpenCart, but
+none for a headless platform. This fills that gap for Medusa.
 
 ## Install
 
@@ -113,21 +112,10 @@ sessions, only the one that survives to completion ever becomes chargeable.
 ## Storefront
 
 The default `nextjs-starter-medusa` has no provider UI registry, so it needs three small changes. A verified,
-copy-pasteable integration is in [`examples/nextjs-starter/`](./examples/nextjs-starter) — it was applied to a
-real checkout against a live backend and adds no type errors to the starter.
+copy-pasteable integration is in [`examples/nextjs-starter/`](./examples/nextjs-starter).
 
-The one thing that matters: **complete the cart first, then read `checkout_url` and redirect.** The URL does
-not exist before completion, which is the opposite order to Stripe. Reversing it reintroduces the exact bug
-this design prevents.
-
-Two non-obvious details the example handles:
-
-- `cart.complete` returns `payment_collections` but not `payment_sessions`; the order must be refetched.
-- That refetch needs `fields: "*payment_collections.payment_sessions"`. Asking only for `.data` omits
-  `provider_id`, leaving no way to identify the Revolut session.
-
-No change is needed to the payment step itself — `initiatePayment` returns status `pending`, which is what the
-stock starter already filters for.
+**Complete the cart first, then read `checkout_url` and redirect.** The URL does not exist before completion,
+which is the opposite order to Stripe. Reversing it lets a customer pay for a cart that never becomes an order.
 
 ## Limitations
 
@@ -146,8 +134,8 @@ npm test
 npm run build
 ```
 
-`spike/` holds the v0.1.0 Sandbox probe used to verify the API's real behaviour before this was written.
-`PLAN.md` records the versioned plan and the defects each review pass found.
+`test/e2e/` holds suites that run against a live Medusa instance, plus `live-sandbox.cjs` which drives the
+compiled provider against real Revolut Sandbox. See [`test/e2e/README.md`](./test/e2e/README.md).
 
 ## License
 

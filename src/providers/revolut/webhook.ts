@@ -11,7 +11,10 @@ const TOLERANCE_MS = 300_000
 // bounded skew while keeping the documented staleness limit.
 const CLOCK_SKEW_MS = 60_000
 
-export type VerifyResult = { ok: true } | { ok: false; reason: string }
+// `retryable` drives the HTTP response, so the retry policy never depends on message wording:
+// a forged signature can never become valid, but a timestamp problem may resolve on redelivery.
+export type VerifyResult =
+  { ok: true } | { ok: false; reason: string; retryable: boolean }
 
 // Repeated headers arrive as arrays.
 const header = (
@@ -36,32 +39,46 @@ export function verifySignature(
 ): VerifyResult {
   // An empty string is a usable HMAC key, so forged signatures would verify against it.
   if (typeof secret !== "string" || secret === "") {
-    return { ok: false, reason: "missing webhook secret" }
+    return { ok: false, reason: "missing webhook secret", retryable: false }
   }
 
   // Medusa delivers rawData as string | Buffer and its subscriber rehydrates a Buffer.
   if (typeof rawBody !== "string" && !Buffer.isBuffer(rawBody)) {
-    return { ok: false, reason: "raw body must be a string or Buffer" }
+    return {
+      ok: false,
+      reason: "raw body must be a string or Buffer",
+      retryable: false,
+    }
   }
 
   const ts = header(headers, "revolut-request-timestamp")
   const signatures = header(headers, "revolut-signature")
-  if (!ts || !signatures) return { ok: false, reason: "missing headers" }
+  if (!ts || !signatures)
+    return { ok: false, reason: "missing headers", retryable: false }
 
   // Digits only; Number() would silently accept "", " ", "+1" and "1e3".
-  if (!TIMESTAMP.test(ts)) return { ok: false, reason: "malformed timestamp" }
+  if (!TIMESTAMP.test(ts))
+    return { ok: false, reason: "malformed timestamp", retryable: true }
 
   const age = now - Number(ts)
   if (!Number.isFinite(age)) {
-    return { ok: false, reason: "malformed timestamp" }
+    return { ok: false, reason: "malformed timestamp", retryable: true }
   }
   // Distinct reasons: the caller decides whether to retry, and a stale delivery is not the same
   // problem as one from the future.
   if (age > TOLERANCE_MS) {
-    return { ok: false, reason: `stale timestamp (${age}ms old)` }
+    return {
+      ok: false,
+      reason: `stale timestamp (${age}ms old)`,
+      retryable: true,
+    }
   }
   if (age < -CLOCK_SKEW_MS) {
-    return { ok: false, reason: `future timestamp (${-age}ms ahead)` }
+    return {
+      ok: false,
+      reason: `future timestamp (${-age}ms ahead)`,
+      retryable: true,
+    }
   }
 
   // Two updates so a Buffer is hashed byte-for-byte; interpolating it would decode as
@@ -81,5 +98,7 @@ export function verifySignature(
       ok = true
     }
   }
-  return ok ? { ok: true } : { ok: false, reason: "no matching signature" }
+  return ok
+    ? { ok: true }
+    : { ok: false, reason: "no matching signature", retryable: false }
 }

@@ -11,13 +11,11 @@ import { CONFLICT_MARKER } from "../../../providers/revolut/service"
 // Provider id without the `pp_` prefix, which the Payment Module prepends.
 const PROVIDER = "revolut_revolut"
 
-// Medusa's built-in /hooks/payment/:provider route acknowledges with 200 and hands the event to
-// the event bus. The local bus wraps subscribers in a try/catch that only logs, and the Redis bus
-// swallows the final failed attempt. Processing ORDER_COMPLETED requires a second Revolut call, so
-// a transient failure there would lose a captured payment permanently: Revolut has the money,
-// Medusa's order stays awaiting payment, and Revolut will not retry because it already got a 200.
-//
-// This route does the same work synchronously and answers with a status Revolut can act on.
+// Medusa's built-in /hooks/payment/:provider route acknowledges with 200 and hands the event to the
+// event bus, which only logs subscriber failures. Since processing needs a second Revolut call, a
+// transient failure there would lose a captured payment with no retry from either side. This route
+// does the work synchronously so the response can ask Revolut to redeliver.
+
 // Revolut retries any error response three more times at ten-minute intervals and accepts
 // anything in 200-399. Two failures are permanent and must never be retried: a bad signature will
 // never become valid, and a drifted order (CONFLICT) will never reconcile itself. Everything else
@@ -78,10 +76,10 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
   }
 
   // Acknowledge anything not actionable so Revolut stops resending it.
-  const actionable =
-    processed.action === PaymentActions.SUCCESSFUL ||
-    processed.action === PaymentActions.AUTHORIZED
-  if (!actionable || !processed.data?.session_id) {
+  if (
+    processed.action !== PaymentActions.SUCCESSFUL ||
+    !processed.data?.session_id
+  ) {
     res.sendStatus(200)
     return
   }

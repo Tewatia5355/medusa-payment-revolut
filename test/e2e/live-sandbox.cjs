@@ -4,9 +4,6 @@
 // Credentials come from env only — never written to disk.
 const Svc =
   require("../../.medusa/server/src/providers/revolut/service.js").default
-const {
-  verifySignature,
-} = require("../../.medusa/server/src/providers/revolut/webhook.js")
 
 const apiKey = process.env.REVOLUT_SECRET_KEY
 if (!apiKey) {

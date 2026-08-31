@@ -51,7 +51,7 @@ PK=<publishable key> REGION=<region id> node test/e2e/run.mjs
 |---|---|---|
 | 1 | Happy path | session is `pending_authorization`, `checkout_url` present, no PII in session data, **order exists before payment**, webhook captures |
 | 2 | Duplicate delivery | replaying the webhook twice does not change `captured_amount` — duplicates were observed against real Sandbox |
-| 3 | Forged / stale / unsigned | all rejected with 204 |
+| 3 | Forged / stale / skewed | forged and unsigned are acknowledged with 204; stale asks for retry with 503; a few ms of future skew is accepted |
 | 4 | Transient Revolut outage | 503 so Revolut retries, then 200 once it recovers |
 | 5 | Out-of-order event | `ORDER_COMPLETED` arriving before the order reads `completed` is acknowledged but not actioned; a later delivery captures |
 
@@ -67,10 +67,6 @@ REVOLUT_SECRET_KEY=sk_... npm run test:e2e:live
 
 Credentials are read from the environment and never written to disk. It creates real Sandbox orders, cancels
 the ones it can, and prints a payable link for the webhook phase.
-
-22 checks: no API call during `initiatePayment`, order creation in `authorizePayment`, re-authorization
-retrieving rather than duplicating, the `merchant_order_data_reference` recovery filter, drift detection on
-amount and currency, state mapping, capture refusal, cancel and double-cancel, and 404 being terminal.
 
 ### Why this exists
 

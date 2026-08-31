@@ -1,6 +1,6 @@
 ---
 name: writing-provider-code
-description: House style for the medusa-payment-revolut plugin. Use when writing, reviewing, or refactoring any code in this repo — the v1.0.0 payment provider, its tests, PLAN.md edits, or a release. Covers the evidence rule (read Medusa/Revolut source, never infer from docs or memory), Medusa v2 conventions and formatting, comment density targets, ponytail simplification, the money-handling traps already paid for in production-grade defects, and how to contribute upstream.
+description: House style for the medusa-payment-revolut plugin. Use when writing, reviewing, or refactoring any code in this repo — the v1.0.0 payment provider, its tests, or a release. Covers the evidence rule (read Medusa/Revolut source, never infer from docs or memory), Medusa v2 conventions and formatting, comment density targets, ponytail simplification, the money-handling traps already paid for in production-grade defects, and how to contribute upstream.
 ---
 
 # medusa-payment-revolut house style
@@ -23,8 +23,9 @@ This is not a stylistic preference — it is the rule that has caught every seri
 - The OpenAPI spec claims `signing_secret` is "included in all webhook responses". It is not — create returns
   it, list does not.
 
-When you cannot verify something, write **`UNVERIFIED`** next to it and resolve it in Sandbox. Do not fill the
-gap with a plausible guess. Three plan rewrites came from assumptions that read as reasonable.
+When you cannot verify something, write **`UNVERIFIED`** next to it and resolve it in Sandbox with
+`npm run test:e2e:live`. Do not fill the gap with a plausible guess. Several redesigns came from assumptions
+that read as reasonable and were wrong.
 
 Pin versions in citations: Medusa `v2.19.0`, Revolut Merchant OpenAPI `2026-04-20`.
 

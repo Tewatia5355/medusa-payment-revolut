@@ -40,8 +40,6 @@ describe("webhook signature", () => {
         .update(bytes)
         .digest("hex")
     expect(ok(bytes, h(sig, ts), SECRET)).toBe(true)
-    // Decoding would substitute U+FFFD and change the signed content.
-    expect(Buffer.from(String(bytes)).length).not.toBe(bytes.length)
   })
 
   it("fails when the body is altered", () => {
@@ -74,16 +72,31 @@ describe("webhook signature", () => {
     expect(ok(BODY, h(), SECRET, Number(TS) - 61_000)).toBe(false)
   })
 
-  // The route retries a timestamp rejection but permanently acknowledges a forged one, so the
-  // reasons must stay distinguishable.
-  it("reports timestamp problems distinctly from a bad signature", () => {
-    const reason = (...a: Parameters<typeof verifySignature>) => {
+  // This flag, not the message wording, decides whether Revolut is asked to redeliver. Getting it
+  // backwards either discards a real payment or invites a retry storm on a forged one.
+  it("marks recoverable failures retryable and forged ones terminal", () => {
+    const fail = (...a: Parameters<typeof verifySignature>) => {
       const r = verifySignature(...a)
-      return r.ok ? "" : r.reason
+      if (r.ok) throw new Error("expected a failure")
+      return r
     }
-    expect(reason(BODY, h(), SECRET, Number(TS) + 400_000)).toContain("stale")
-    expect(reason(BODY, h(), SECRET, Number(TS) - 120_000)).toContain("future")
-    expect(reason(BODY, h(), "wsk_wrong", NOW)).not.toContain("timestamp")
+
+    // Recoverable: a redelivery may carry a fresh timestamp.
+    expect(fail(BODY, h(), SECRET, Number(TS) + 400_000)).toMatchObject({
+      retryable: true,
+      reason: expect.stringContaining("stale"),
+    })
+    expect(fail(BODY, h(), SECRET, Number(TS) - 120_000)).toMatchObject({
+      retryable: true,
+      reason: expect.stringContaining("future"),
+    })
+    expect(fail(BODY, h(SIG, "not-a-number"), SECRET, NOW).retryable).toBe(true)
+
+    // Terminal: no redelivery will ever make these valid.
+    expect(fail(BODY, h(), "wsk_wrong", NOW).retryable).toBe(false)
+    expect(fail(BODY, h("v1=abc"), SECRET, NOW).retryable).toBe(false)
+    expect(fail(BODY, {}, SECRET, NOW).retryable).toBe(false)
+    expect(fail(BODY, h(), "", NOW).retryable).toBe(false)
   })
 
   it("rejects timestamps that Number() would silently coerce", () => {
