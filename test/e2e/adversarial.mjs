@@ -2,8 +2,8 @@
 // Each targets a risk the redesign itself introduced.
 const M = "http://localhost:9000"
 const K = "http://localhost:4555"
-const PK = "pk_0780d378dab92f2e37caf377269f99391007a66508acc61f1c85966d5ce92950"
-const REGION = "reg_01M1A0045KNAA65DZS61AEWB17"
+const PK = process.env.PK
+const REGION = process.env.REGION
 const { execSync } = await import("node:child_process")
 const crypto = await import("node:crypto")
 

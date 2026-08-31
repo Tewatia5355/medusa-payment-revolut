@@ -1,8 +1,8 @@
 // Mirrors placeRevolutOrder() exactly: complete cart -> refetch order with field expansion ->
 // find the revolut session -> resolve checkout_url.
 const M = "http://localhost:9000",
-  PK = "pk_0780d378dab92f2e37caf377269f99391007a66508acc61f1c85966d5ce92950",
-  REGION = "reg_01M1A0045KNAA65DZS61AEWB17"
+  PK = process.env.PK,
+  REGION = process.env.REGION
 const store = async (p, o = {}) => {
   const r = await fetch(M + p, {
     ...o,

@@ -43,6 +43,7 @@ Enable the provider for your region, then:
 ```bash
 node test/e2e/mock-revolut.mjs &
 PK=<publishable key> REGION=<region id> node test/e2e/run.mjs
+# same env vars for adversarial.mjs and storefront.mjs
 ```
 
 ## Scenarios
