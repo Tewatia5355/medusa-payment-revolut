@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@medusajs/framework": "2.19.0",
-    "@medusajs/medusa": "2.19.0",
+    "@medusajs/medusa": "2.23.0",
     "@swc/core": "^1.5.7",
     "@swc/jest": "^0.2.36",
     "@types/jest": "^29.5.12",
@@ -49,7 +49,7 @@
   },
   "peerDependencies": {
     "@medusajs/framework": "2.19.0",
-    "@medusajs/medusa": "2.19.0",
+    "@medusajs/medusa": "2.23.0",
     "@medusajs/core-flows": "2.19.0"
   },
   "engines": {
